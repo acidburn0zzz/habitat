@@ -1,0 +1,32 @@
+[package]
+name = "habitat_pkg_export_tar"
+version = "0.0.0"
+authors = ["Nell Shamrell <nellshamrell@gmail.com>"]
+workspace = "../../"
+
+[lib]
+name = "habitat_pkg_export_tar"
+
+[[bin]]                                                                
+name = "hab-pkg-export-tar"                                        
+path = "src/main.rs"                                  
+doc = false  
+
+[dependencies]
+base64 = "*"
+clap = { version = "*", features = ["suggestions", "color", "unstable"] }
+env_logger = "*"
+hab = { path = "../hab" }
+habitat_common = { path = "../common" }
+habitat_core = { path = "../core" }
+handlebars = { version = "*", default-features = false }
+lazy_static = "*"
+log = "*"
+mktemp = "*"
+regex = "*"
+serde = { version = "*", features = ["rc"] }
+serde_json = "1.0"
+url = "*"
+failure = "0.1"
+failure_derive = "0.1"
+tempdir = "*"
