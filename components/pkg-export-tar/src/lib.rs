@@ -18,6 +18,7 @@ extern crate lazy_static;
 extern crate log;
 extern crate serde_json;
 extern crate regex;
+extern crate tar;
 
 mod build;
 pub mod cli;
@@ -27,6 +28,7 @@ mod util;
 use std::process::Command;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::fs::File;
 pub use cli::{Cli, PkgIdentArgOptions};
 pub use error::{Error, Result};
 use common::ui::UI;
@@ -35,6 +37,7 @@ use hcore::url as hurl;
 use hcore::package::{PackageIdent, PackageArchive};
 use mktemp::Temp;
 use regex::Regex;
+use tar::Builder;
 
 pub use build::BuildSpec;
 
@@ -106,21 +109,18 @@ fn install_command(temp_dir_path: &PathBuf, hart_to_package: &str, builder_url: 
 }
 
 fn tar_command(temp_dir_path: &PathBuf, hart_to_package: &str) {
-    let status = Command::new("tar")
-        .arg("cpzf")
-        .arg(tar_name(&hart_to_package))
-        .arg("-C")
-        .arg(&temp_dir_path)
-        .arg("./hab/pkgs")
-        .arg("./hab/bin")
-        .status()
-        .expect("failed to create tarball");
+    let tarball = File::create(tar_name(&hart_to_package)).unwrap();
+    let mut tar_builder = Builder::new(tarball);
 
-    if status.success() {
-        println!("Tarball export complete!")
-    } else {
-        println!("Unable to export package to tarball.")
-    }
+    let mut hab_pkgs_buf = temp_dir_path.clone();
+    hab_pkgs_buf.push("hab/pkgs");
+
+    tar_builder.append_dir_all("hab/pkgs", hab_pkgs_buf);
+
+    let mut hab_bin_buf = temp_dir_path.clone(); 
+    hab_bin_buf.push("hab/bin");
+
+    tar_builder.append_dir_all("hab/bin", hab_bin_buf);
 }
 
 fn tar_name(hart_to_package: &str) -> String {
