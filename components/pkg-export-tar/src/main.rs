@@ -12,7 +12,6 @@ use hcore::PROGRAM_NAME;
 use export_tar::{Cli, PkgIdentArgOptions, Result};
 
 fn main() {
-    //env_logger::init().unwrap();
     let mut ui = UI::default_with_env();
     if let Err(e) = start(&mut ui) {
         ui.fatal(e).unwrap();
