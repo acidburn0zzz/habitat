@@ -20,8 +20,8 @@ clippy = { version = "*", optional = true }
 chrono = "*"
 env_logger = "*"
 hab = { path = "../hab" }
-habitat_core = { git = "https://github.com/habitat-sh/core.git" }
 habitat_common = { path = "../common" }
+habitat_core = { git = "https://github.com/habitat-sh/core.git" }
 handlebars = { version = "*", default-features = false }
 lazy_static = "*"
 log = "*"

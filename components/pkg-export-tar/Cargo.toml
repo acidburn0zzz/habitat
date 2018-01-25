@@ -18,15 +18,15 @@ clap = { version = "*", features = ["suggestions", "color", "unstable"] }
 env_logger = "*"
 hab = { path = "../hab" }
 habitat_common = { path = "../common" }
-habitat_core = { path = "../core" }
+habitat_core = { git = "https://github.com/habitat-sh/core.git" }
 handlebars = { version = "*", default-features = false }
 lazy_static = "*"
 log = "*"
 mktemp = "*"
 regex = "*"
-serde = { version = "*", features = ["rc"] }
+serde = { version = "1.0", features = ["rc"] }
 serde_json = "1.0"
 url = "*"
-failure = "0.1"
-failure_derive = "0.1"
+failure = { git = "https://github.com/withoutboats/failure.git" }
+failure_derive = { git = "https://github.com/withoutboats/failure_derive.git" }
 tempdir = "*"
