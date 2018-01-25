@@ -56,20 +56,21 @@ pub struct BuildSpec<'a> {
 
 impl<'a> BuildSpec<'a> {
     /// Creates a `BuildSpec` from cli arguments.
-    pub fn new_from_cli_matches(m: &'a clap::ArgMatches,
-                                default_channel: &'a str,
-                                default_url: &'a str)
-                                -> Self {
+    pub fn new_from_cli_matches(
+        m: &'a clap::ArgMatches,
+        default_channel: &'a str,
+        default_url: &'a str,
+    ) -> Self {
         BuildSpec {
             hab: m.value_of("HAB_PKG").unwrap_or(DEFAULT_HAB_IDENT),
-            hab_launcher: m.value_of("HAB_LAUNCHER_PKG")
-                .unwrap_or(DEFAULT_LAUNCHER_IDENT),
+            hab_launcher: m.value_of("HAB_LAUNCHER_PKG").unwrap_or(
+                DEFAULT_LAUNCHER_IDENT,
+            ),
             hab_sup: m.value_of("HAB_SUP_PKG").unwrap_or(DEFAULT_SUP_IDENT),
             url: m.value_of("BLDR_URL").unwrap_or(&default_url),
             channel: m.value_of("CHANNEL").unwrap_or(&default_channel),
             base_pkgs_url: m.value_of("BASE_PKGS_BLDR_URL").unwrap_or(&default_url),
-            base_pkgs_channel: m.value_of("BASE_PKGS_CHANNEL")
-                .unwrap_or(&default_channel),
+            base_pkgs_channel: m.value_of("BASE_PKGS_CHANNEL").unwrap_or(&default_channel),
             idents_or_archives: m.values_of("PKG_IDENT_OR_ARTIFACT")
                 .expect("No package specified")
                 .collect(),
@@ -94,9 +95,9 @@ impl<'a> BuildSpec<'a> {
         let ctx = BuildRootContext::from_spec(&self, rootfs)?;
 
         Ok(BuildRoot {
-               workdir: workdir,
-               ctx: ctx,
-           })
+            workdir: workdir,
+            ctx: ctx,
+        })
     }
 }
 
@@ -182,9 +183,7 @@ impl BuildRootContext {
             };
             let pkg_install = PackageInstall::load(&ident, Some(&rootfs))?;
             if pkg_install.is_runnable() {
-                idents.push(PkgIdentType::Svc(SvcIdent {
-                    ident: ident,
-                }));
+                idents.push(PkgIdentType::Svc(SvcIdent { ident: ident }));
             } else {
                 idents.push(PkgIdentType::Lib(ident));
             }
@@ -208,18 +207,17 @@ impl BuildRootContext {
         self.idents
             .iter()
             .filter_map(|t| match *t {
-                            PkgIdentType::Svc(ref svc) => Some(svc.ident.as_ref()),
-                            _ => None,
-                        })
+                PkgIdentType::Svc(ref svc) => Some(svc.ident.as_ref()),
+                _ => None,
+            })
             .collect()
     }
 
     /// Returns the first service package from the provided Habitat packages.
     pub fn primary_svc_ident(&self) -> &PackageIdent {
-        self.svc_idents()
-            .first()
-            .map(|e| *e)
-            .expect("Primary service package was confirmed")
+        self.svc_idents().first().map(|e| *e).expect(
+            "Primary service package was confirmed",
+        )
     }
 
     fn primary_svc(&self) -> Result<PackageInstall> {
@@ -260,12 +258,9 @@ impl BuildRootContext {
         // A valid context for a build root will contain at least one service package, called the
         // primary service package.
         if let None = self.svc_idents().first().map(|e| *e) {
-            return Err(Error::PrimaryServicePackageNotFound(self.idents
-                                                                .iter()
-                                                                .map(|e| {
-                                                                         e.ident().to_string()
-                                                                     })
-                                                                .collect()))?;
+            return Err(Error::PrimaryServicePackageNotFound(
+                self.idents.iter().map(|e| e.ident().to_string()).collect(),
+            ))?;
         }
 
         Ok(())
@@ -322,11 +317,12 @@ mod test {
         }
     }
 
-    fn fake_pkg_install<P: AsRef<Path>>(ident: &str,
-                                        bins: Option<Vec<&str>>,
-                                        is_svc: bool,
-                                        rootfs: P)
-                                        -> PackageIdent {
+    fn fake_pkg_install<P: AsRef<Path>>(
+        ident: &str,
+        bins: Option<Vec<&str>>,
+        is_svc: bool,
+        rootfs: P,
+    ) -> PackageIdent {
         let mut ident = PackageIdent::from_str(ident).unwrap();
         if let None = ident.version {
             ident.version = Some("1.2.3".into());
@@ -342,12 +338,13 @@ mod test {
         util::write_file(prefix.join("SVC_GROUP"), "my_group").unwrap();
 
         if let Some(bins) = bins {
-            util::write_file(prefix.join("PATH"),
-                             hcore::fs::pkg_install_path(&ident, None::<&Path>)
-                                 .join("bin")
-                                 .to_string_lossy()
-                                 .as_ref())
-                    .unwrap();
+            util::write_file(
+                prefix.join("PATH"),
+                hcore::fs::pkg_install_path(&ident, None::<&Path>)
+                    .join("bin")
+                    .to_string_lossy()
+                    .as_ref(),
+            ).unwrap();
             for bin in bins {
                 util::write_file(prefix.join("bin").join(bin), "").unwrap();
             }
@@ -378,8 +375,10 @@ mod test {
                 .unwrap();
             let link = rootfs.path().join(CACHE_ARTIFACT_PATH);
 
-            assert_eq!(cache_artifact_path(None::<&Path>),
-                       link.read_link().unwrap());
+            assert_eq!(
+                cache_artifact_path(None::<&Path>),
+                link.read_link().unwrap()
+            );
         }
 
         #[test]
@@ -404,18 +403,23 @@ mod test {
                 .link_binaries(&mut ui, rootfs.path(), &base_pkgs)
                 .unwrap();
 
-            assert_eq!(hcore::fs::pkg_install_path(base_pkgs.busybox.as_ref().unwrap(),
-                                                   None::<&Path>)
-                               .join("bin/busybox"),
-                       rootfs.path().join("bin/busybox").read_link().unwrap(),
-                       "busybox program is symlinked into /bin");
-            assert_eq!(hcore::fs::pkg_install_path(&base_pkgs.busybox.unwrap(), None::<&Path>)
-                           .join("bin/sh"),
-                       rootfs.path().join("bin/sh").read_link().unwrap(),
-                       "busybox's sh program is symlinked into /bin");
-            assert_eq!(hcore::fs::pkg_install_path(&base_pkgs.hab, None::<&Path>).join("bin/hab"),
-                       rootfs.path().join("bin/hab").read_link().unwrap(),
-                       "hab program is symlinked into /bin");
+            assert_eq!(
+                hcore::fs::pkg_install_path(base_pkgs.busybox.as_ref().unwrap(), None::<&Path>)
+                    .join("bin/busybox"),
+                rootfs.path().join("bin/busybox").read_link().unwrap(),
+                "busybox program is symlinked into /bin"
+            );
+            assert_eq!(
+                hcore::fs::pkg_install_path(&base_pkgs.busybox.unwrap(), None::<&Path>)
+                    .join("bin/sh"),
+                rootfs.path().join("bin/sh").read_link().unwrap(),
+                "busybox's sh program is symlinked into /bin"
+            );
+            assert_eq!(
+                hcore::fs::pkg_install_path(&base_pkgs.hab, None::<&Path>).join("bin/hab"),
+                rootfs.path().join("bin/hab").read_link().unwrap(),
+                "hab program is symlinked into /bin"
+            );
         }
 
         #[test]
@@ -427,20 +431,24 @@ mod test {
                 .link_cacerts(&mut ui, rootfs.path(), &base_pkgs)
                 .unwrap();
 
-            assert_eq!(hcore::fs::pkg_install_path(&base_pkgs.cacerts, None::<&Path>).join("ssl"),
-                       rootfs.path().join("etc/ssl").read_link().unwrap(),
-                       "cacerts are symlinked into /etc/ssl");
+            assert_eq!(
+                hcore::fs::pkg_install_path(&base_pkgs.cacerts, None::<&Path>).join("ssl"),
+                rootfs.path().join("etc/ssl").read_link().unwrap(),
+                "cacerts are symlinked into /etc/ssl"
+            );
         }
 
         fn ui() -> (UI, OutputBuffer, OutputBuffer) {
             let stdout_buf = OutputBuffer::new();
             let stderr_buf = OutputBuffer::new();
 
-            let ui = UI::with_streams(Box::new(io::empty()),
-                                      || Box::new(stdout_buf.clone()),
-                                      || Box::new(stderr_buf.clone()),
-                                      Coloring::Never,
-                                      false);
+            let ui = UI::with_streams(
+                Box::new(io::empty()),
+                || Box::new(stdout_buf.clone()),
+                || Box::new(stderr_buf.clone()),
+                Coloring::Never,
+                false,
+            );
 
             (ui, stdout_buf, stderr_buf)
         }
@@ -464,10 +472,12 @@ mod test {
         }
 
         fn fake_launcher_install<P: AsRef<Path>>(rootfs: P) -> PackageIdent {
-            fake_pkg_install("acme/hab-launcher",
-                             Some(vec!["hab-launch"]),
-                             false,
-                             &rootfs)
+            fake_pkg_install(
+                "acme/hab-launcher",
+                Some(vec!["hab-launch"]),
+                false,
+                &rootfs,
+            )
         }
 
         fn fake_busybox_install<P: AsRef<Path>>(rootfs: P) -> PackageIdent {
@@ -532,38 +542,50 @@ mod test {
             spec.idents_or_archives = vec!["acme/libby", "acme/runna", "acme/jogga"];
             let ctx = BuildRootContext::from_spec(&spec, rootfs.path()).unwrap();
 
-            assert_eq!(vec![&PackageIdent::from_str("acme/runna").unwrap(),
-                            &PackageIdent::from_str("acme/jogga").unwrap()],
-                       ctx.svc_idents());
-            assert_eq!(&PackageIdent::from_str("acme/runna").unwrap(),
-                       ctx.primary_svc_ident());
-            assert_eq!(runna_install_ident,
-                       ctx.installed_primary_svc_ident().unwrap());
+            assert_eq!(
+                vec![
+                    &PackageIdent::from_str("acme/runna").unwrap(),
+                    &PackageIdent::from_str("acme/jogga").unwrap(),
+                ],
+                ctx.svc_idents()
+            );
+            assert_eq!(
+                &PackageIdent::from_str("acme/runna").unwrap(),
+                ctx.primary_svc_ident()
+            );
+            assert_eq!(
+                runna_install_ident,
+                ctx.installed_primary_svc_ident().unwrap()
+            );
             assert_eq!(Path::new("/bin"), ctx.bin_path());
             assert_eq!("/bin", ctx.env_path());
             assert_eq!(spec.channel, ctx.channel());
             assert_eq!(rootfs.path(), ctx.rootfs());
 
             // Order of paths should not matter, this is why we set-compare
-            let vol_paths = vec![(&*FS_ROOT_PATH)
-                                     .join("hab/svc/jogga/config")
-                                     .to_string_lossy()
-                                     .to_string(),
-                                 (&*FS_ROOT_PATH)
-                                     .join("hab/svc/jogga/data")
-                                     .to_string_lossy()
-                                     .to_string(),
-                                 (&*FS_ROOT_PATH)
-                                     .join("hab/svc/runna/config")
-                                     .to_string_lossy()
-                                     .to_string(),
-                                 (&*FS_ROOT_PATH)
-                                     .join("hab/svc/runna/data")
-                                     .to_string_lossy()
-                                     .to_string()];
+            let vol_paths = vec![
+                (&*FS_ROOT_PATH)
+                    .join("hab/svc/jogga/config")
+                    .to_string_lossy()
+                    .to_string(),
+                (&*FS_ROOT_PATH)
+                    .join("hab/svc/jogga/data")
+                    .to_string_lossy()
+                    .to_string(),
+                (&*FS_ROOT_PATH)
+                    .join("hab/svc/runna/config")
+                    .to_string_lossy()
+                    .to_string(),
+                (&*FS_ROOT_PATH)
+                    .join("hab/svc/runna/data")
+                    .to_string_lossy()
+                    .to_string(),
+            ];
             let vol_paths: HashSet<String> = HashSet::from_iter(vol_paths.iter().cloned());
-            assert_eq!(vol_paths,
-                       HashSet::from_iter(ctx.svc_volumes().iter().cloned()));
+            assert_eq!(
+                vol_paths,
+                HashSet::from_iter(ctx.svc_volumes().iter().cloned())
+            );
 
             let (users, groups) = ctx.svc_users_and_groups().unwrap();
             assert_eq!(1, users.len());

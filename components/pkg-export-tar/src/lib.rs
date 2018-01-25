@@ -58,7 +58,9 @@ pub fn export(ui: &mut UI, build_spec: BuildSpec) -> Result<()> {
     let hart_to_package = build_spec.idents_or_archives.join(", ");
     let builder_url = build_spec.url;
 
-    ui.begin(format!("Building a tarball with: {}", hart_to_package))?;
+    ui.begin(
+        format!("Building a tarball with: {}", hart_to_package),
+    )?;
 
     let temp_dir_path = Temp::new_dir().unwrap().to_path_buf();
 
@@ -117,7 +119,7 @@ fn tar_command(temp_dir_path: &PathBuf, hart_to_package: &str) {
 
     tar_builder.append_dir_all("hab/pkgs", hab_pkgs_buf);
 
-    let mut hab_bin_buf = temp_dir_path.clone(); 
+    let mut hab_bin_buf = temp_dir_path.clone();
     hab_bin_buf.push("hab/bin");
 
     tar_builder.append_dir_all("hab/bin", hab_bin_buf);
@@ -153,9 +155,11 @@ fn tar_name(hart_to_package: &str) -> String {
 }
 
 fn format_tar_name(ident: PackageIdent) -> String {
-    format!("{}-{}-{}-{}.tar.gz",
-            ident.origin,
-            ident.name,
-            ident.version.unwrap(),
-            ident.release.unwrap())
+    format!(
+        "{}-{}-{}-{}.tar.gz",
+        ident.origin,
+        ident.name,
+        ident.version.unwrap(),
+        ident.release.unwrap()
+    )
 }
