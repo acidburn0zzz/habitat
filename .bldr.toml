@@ -92,7 +92,6 @@ paths = [
 [hab-pkg-export-tar]
 plan_path = "components/pkg-export-tar"
 paths = [
-  "components/core/*",
   "components/common/*",
   "components/hab/*",
   "components/pkg-export-tar/*"
