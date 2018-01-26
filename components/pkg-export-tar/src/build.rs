@@ -12,16 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use clap;
-use std::path::{Path, PathBuf};
+use std::fs as stdfs;
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::symlink;
 use std::str::FromStr;
-
+use clap;
+use common;
+use common::command::package::install::InstallSource;
 use common::ui::{UI, Status};
-use hcore::PROGRAM_NAME;
-use hcore::package::{PackageArchive, PackageIdent, PackageInstall};
 use tempdir::TempDir;
-
+use std::path::{Path, PathBuf};
+use hcore::package::{PackageArchive, PackageIdent, PackageInstall};
 use error::{Error, Result};
+use hcore::PROGRAM_NAME;
+use hcore::fs::{CACHE_ARTIFACT_PATH, CACHE_KEY_PATH, cache_artifact_path, cache_key_path};
+
+use super::{VERSION, BUSYBOX_IDENT};
+
+use rootfs;
 use util;
 
 const DEFAULT_HAB_IDENT: &'static str = "core/hab";
@@ -61,6 +69,7 @@ impl<'a> BuildSpec<'a> {
         default_channel: &'a str,
         default_url: &'a str,
     ) -> Self {
+
         BuildSpec {
             hab: m.value_of("HAB_PKG").unwrap_or(DEFAULT_HAB_IDENT),
             hab_launcher: m.value_of("HAB_LAUNCHER_PKG").unwrap_or(
@@ -85,13 +94,15 @@ impl<'a> BuildSpec<'a> {
     /// * If the root file system cannot be created
     /// * If the `BuildRootContext` cannot be created
     pub fn create(self, ui: &mut UI) -> Result<BuildRoot> {
-        debug!("Creating BuildRoot from {:?}", &self);
         let workdir = TempDir::new(&*PROGRAM_NAME)?;
         let rootfs = workdir.path().join("rootfs");
+
         ui.status(
             Status::Creating,
             format!("build root in {}", workdir.path().display()),
         )?;
+        self.prepare_rootfs(ui, &rootfs)?;
+println!("debugs to here");
         let ctx = BuildRootContext::from_spec(&self, rootfs)?;
 
         Ok(BuildRoot {
@@ -99,43 +110,159 @@ impl<'a> BuildSpec<'a> {
             ctx: ctx,
         })
     }
+
+    fn prepare_rootfs<P: AsRef<Path>>(&self, ui: &mut UI, rootfs: P) -> Result<()> {
+        ui.status(Status::Creating, "root filesystem")?;
+        if cfg!(target_os = "linux") {
+            rootfs::create(&rootfs)?;
+        }
+        self.create_symlink_to_artifact_cache(ui, &rootfs)?;
+        self.create_symlink_to_key_cache(ui, &rootfs)?;
+        let base_pkgs = self.install_base_pkgs(ui, &rootfs)?;
+        let user_pkgs = self.install_user_pkgs(ui, &rootfs)?;
+        self.remove_symlink_to_key_cache(ui, &rootfs)?;
+        self.remove_symlink_to_artifact_cache(ui, &rootfs)?;
+
+        Ok(())
+    }
+
+    fn create_symlink_to_artifact_cache<P: AsRef<Path>>(
+        &self,
+        ui: &mut UI,
+        rootfs: P,
+    ) -> Result<()> {
+        ui.status(Status::Creating, "artifact cache symlink")?;
+        let src = cache_artifact_path(None::<P>);
+        let dst = rootfs.as_ref().join(CACHE_ARTIFACT_PATH);
+        stdfs::create_dir_all(dst.parent().expect("parent directory exists"))?;
+        debug!(
+            "Symlinking src: {} to dst: {}",
+            src.display(),
+            dst.display()
+        );
+
+        Ok(symlink(src, dst)?)
+    }
+
+    fn create_symlink_to_key_cache<P: AsRef<Path>>(&self, ui: &mut UI, rootfs: P) -> Result<()> {
+        ui.status(Status::Creating, "key cache symlink")?;
+        let src = cache_key_path(None::<P>);
+        let dst = rootfs.as_ref().join(CACHE_KEY_PATH);
+        stdfs::create_dir_all(dst.parent().expect("parent directory exists"))?;
+        debug!(
+            "Symlinking src: {} to dst: {}",
+            src.display(),
+            dst.display()
+        );
+
+        Ok(symlink(src, dst)?)
+    }
+
+    fn install_base_pkgs<P: AsRef<Path>>(&self, ui: &mut UI, rootfs: P) -> Result<BasePkgIdents> {
+        let hab = self.install_base_pkg(ui, self.hab, &rootfs)?;
+        let sup = self.install_base_pkg(ui, self.hab_sup, &rootfs)?;
+        let launcher = self.install_base_pkg(ui, self.hab_launcher, &rootfs)?;
+        let busybox = if cfg!(target_os = "linux") {
+            Some(self.install_base_pkg(ui, BUSYBOX_IDENT, &rootfs)?)
+        } else {
+            None
+        };
+
+        Ok(BasePkgIdents {
+            hab,
+            sup,
+            launcher,
+            busybox,
+        })
+    }
+
+    fn install_user_pkgs<P: AsRef<Path>>(
+        &self,
+        ui: &mut UI,
+        rootfs: P,
+    ) -> Result<Vec<PackageIdent>> {
+        let mut idents = Vec::new();
+        for ioa in self.idents_or_archives.iter() {
+            idents.push(self.install_user_pkg(ui, ioa, &rootfs)?);
+        }
+
+        Ok(idents)
+    }
+
+    fn install_base_pkg<P: AsRef<Path>>(
+        &self,
+        ui: &mut UI,
+        ident_or_archive: &str,
+        fs_root_path: P,
+    ) -> Result<PackageIdent> {
+        self.install(
+            ui,
+            ident_or_archive,
+            self.base_pkgs_url,
+            self.base_pkgs_channel,
+            fs_root_path,
+        )
+    }
+
+    fn install_user_pkg<P: AsRef<Path>>(
+        &self,
+        ui: &mut UI,
+        ident_or_archive: &str,
+        fs_root_path: P,
+    ) -> Result<PackageIdent> {
+        self.install(ui, ident_or_archive, self.url, self.channel, fs_root_path)
+    }
+
+    fn install<P: AsRef<Path>>(
+        &self,
+        ui: &mut UI,
+        ident_or_archive: &str,
+        url: &str,
+        channel: &str,
+        fs_root_path: P,
+    ) -> Result<PackageIdent> {
+
+        let install_source: InstallSource = ident_or_archive.parse()?;
+        let package_install = common::command::package::install::start(
+            ui,
+            url,
+            Some(channel),
+            &install_source,
+            &*PROGRAM_NAME,
+            VERSION,
+            &fs_root_path,
+            &cache_artifact_path(Some(&fs_root_path)),
+            None,
+        )?;
+        Ok(package_install.into())
+    }
+
+    fn remove_symlink_to_artifact_cache<P: AsRef<Path>>(
+        &self,
+        ui: &mut UI,
+        rootfs: P,
+    ) -> Result<()> {
+        ui.status(Status::Deleting, "artifact cache symlink")?;
+        stdfs::remove_dir_all(rootfs.as_ref().join(CACHE_ARTIFACT_PATH))?;
+        Ok(())
+    }
+
+    fn remove_symlink_to_key_cache<P: AsRef<Path>>(&self, ui: &mut UI, rootfs: P) -> Result<()> {
+        ui.status(Status::Deleting, "artifact key symlink")?;
+        stdfs::remove_dir_all(rootfs.as_ref().join(CACHE_KEY_PATH))?;
+
+        Ok(())
+    }
+
 }
 
-/// A temporary file system build root, based on Habitat packages.
+#[derive(Debug)]
 pub struct BuildRoot {
     /// The temporary directory under which all root file system and other related files and
     /// directories will be created.
     workdir: TempDir,
     /// The build root context containing information about Habitat packages, `PATH` info, etc.
     ctx: BuildRootContext,
-}
-
-impl BuildRoot {
-    /// Returns the temporary work directory under which a root file system has been created.
-    pub fn workdir(&self) -> &Path {
-        self.workdir.path()
-    }
-
-    /// Returns the `BuildRootContext` for this build root.
-    pub fn ctx(&self) -> &BuildRootContext {
-        &self.ctx
-    }
-
-    /// Destroys the temporary build root.
-    ///
-    /// Note that the `BuildRoot` will automatically destroy itself when it falls out of scope, so
-    /// a call to this method is not required, but calling this will provide more user-facing
-    /// progress and error reporting.
-    ///
-    /// # Errors
-    ///
-    /// * If the temporary work directory cannot be removed
-    pub fn destroy(self, ui: &mut UI) -> Result<()> {
-        ui.status(Status::Deleting, "temporary files")?;
-        self.workdir.close()?;
-
-        Ok(())
-    }
 }
 
 /// The file system contents, location, Habitat pacakges, and other context for a build root.
@@ -168,8 +295,11 @@ impl BuildRootContext {
     /// * If a Package Identifier cannot be parsed from an string representation
     /// * If package metadata cannot be read
     pub fn from_spec<P: Into<PathBuf>>(spec: &BuildSpec, rootfs: P) -> Result<Self> {
+println!("one");
         let rootfs = rootfs.into();
+println!("two");
         let mut idents = Vec::new();
+println!("three");
         for ident_or_archive in &spec.idents_or_archives {
             let ident = if Path::new(ident_or_archive).is_file() {
                 // We're going to use the `$pkg_origin/$pkg_name`, fuzzy form of a package
@@ -181,9 +311,14 @@ impl BuildRootContext {
             } else {
                 PackageIdent::from_str(ident_or_archive)?
             };
+println!("four");
             let pkg_install = PackageInstall::load(&ident, Some(&rootfs))?;
+println!("five");
             if pkg_install.is_runnable() {
-                idents.push(PkgIdentType::Svc(SvcIdent { ident: ident }));
+                idents.push(PkgIdentType::Svc(SvcIdent {
+                    ident: ident,
+                    exposes: pkg_install.exposes()?,
+                }));
             } else {
                 idents.push(PkgIdentType::Lib(ident));
             }
@@ -202,58 +337,6 @@ impl BuildRootContext {
         Ok(context)
     }
 
-    /// Returns a list of all provided Habitat packages which contain a runnable service.
-    pub fn svc_idents(&self) -> Vec<&PackageIdent> {
-        self.idents
-            .iter()
-            .filter_map(|t| match *t {
-                PkgIdentType::Svc(ref svc) => Some(svc.ident.as_ref()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// Returns the first service package from the provided Habitat packages.
-    pub fn primary_svc_ident(&self) -> &PackageIdent {
-        self.svc_idents().first().map(|e| *e).expect(
-            "Primary service package was confirmed",
-        )
-    }
-
-    fn primary_svc(&self) -> Result<PackageInstall> {
-        PackageInstall::load(self.primary_svc_ident(), Some(&self.rootfs)).map_err(From::from)
-    }
-
-    /// Returns the fully qualified Package Identifier for the first service package.
-    ///
-    /// # Errors
-    ///
-    /// * If the primary service package could not be loaded from disk
-    pub fn installed_primary_svc_ident(&self) -> Result<PackageIdent> {
-        let pkg_install = self.primary_svc()?;
-        Ok(pkg_install.ident().clone())
-    }
-
-    /// Returns the `bin` path which is used for all program symlinking.
-    pub fn bin_path(&self) -> &Path {
-        self.bin_path.as_ref()
-    }
-
-    /// Returns a colon-delimited `PATH` string containing all important program paths.
-    pub fn env_path(&self) -> &str {
-        self.env_path.as_str()
-    }
-
-    /// Returns the release channel name used to install all provided Habitat packages.
-    pub fn channel(&self) -> &str {
-        self.channel.as_str()
-    }
-
-    /// Returns the root file system which is used to export an image.
-    pub fn rootfs(&self) -> &Path {
-        self.rootfs.as_ref()
-    }
-
     fn validate(&self) -> Result<()> {
         // A valid context for a build root will contain at least one service package, called the
         // primary service package.
@@ -265,6 +348,17 @@ impl BuildRootContext {
 
         Ok(())
     }
+
+    /// Returns a list of all provided Habitat packages which contain a runnable service.
+    pub fn svc_idents(&self) -> Vec<&PackageIdent> {
+        self.idents
+            .iter()
+            .filter_map(|t| match *t {
+                PkgIdentType::Svc(ref svc) => Some(svc.ident.as_ref()),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// A service identifier representing a Habitat package which contains a runnable service.
@@ -272,7 +366,10 @@ impl BuildRootContext {
 struct SvcIdent {
     /// The Package Identifier.
     pub ident: PackageIdent,
+    /// A list of all port exposes for the package.
+    pub exposes: Vec<String>,
 }
+
 
 /// An enum of service and library Habitat packages.
 ///
@@ -295,304 +392,15 @@ impl PkgIdentType {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use hcore;
-    use hcore::package::PackageTarget;
-
-    use super::*;
-
-    fn build_spec<'a>() -> BuildSpec<'a> {
-        BuildSpec {
-            hab: "hab",
-            hab_launcher: "hab_launcher",
-            hab_sup: "hab_sup",
-            url: "url",
-            channel: "channel",
-            base_pkgs_url: "base_pkgs_url",
-            base_pkgs_channel: "base_pkgs_channel",
-            idents_or_archives: Vec::new(),
-            user_id: 42,
-            non_root: false,
-        }
-    }
-
-    fn fake_pkg_install<P: AsRef<Path>>(
-        ident: &str,
-        bins: Option<Vec<&str>>,
-        is_svc: bool,
-        rootfs: P,
-    ) -> PackageIdent {
-        let mut ident = PackageIdent::from_str(ident).unwrap();
-        if let None = ident.version {
-            ident.version = Some("1.2.3".into());
-        }
-        if let None = ident.release {
-            ident.release = Some("21120102121200".into());
-        }
-        let prefix = hcore::fs::pkg_install_path(&ident, Some(rootfs));
-        util::write_file(prefix.join("IDENT"), &ident.to_string()).unwrap();
-        util::write_file(prefix.join("TARGET"), &PackageTarget::default().to_string()).unwrap();
-
-        util::write_file(prefix.join("SVC_USER"), "my_user").unwrap();
-        util::write_file(prefix.join("SVC_GROUP"), "my_group").unwrap();
-
-        if let Some(bins) = bins {
-            util::write_file(
-                prefix.join("PATH"),
-                hcore::fs::pkg_install_path(&ident, None::<&Path>)
-                    .join("bin")
-                    .to_string_lossy()
-                    .as_ref(),
-            ).unwrap();
-            for bin in bins {
-                util::write_file(prefix.join("bin").join(bin), "").unwrap();
-            }
-        }
-        if is_svc {
-            util::write_file(prefix.join("run"), "").unwrap();
-        }
-        ident
-    }
-
-    mod build_spec {
-        use std::io::{self, Cursor, Write};
-        use std::sync::{Arc, RwLock};
-
-        use common::ui::{Coloring, UI};
-        use hcore;
-        use tempdir::TempDir;
-
-        use super::super::*;
-        use super::*;
-
-        #[test]
-        fn artifact_cache_symlink() {
-            let rootfs = TempDir::new("rootfs").unwrap();
-            let (mut ui, _, _) = ui();
-            build_spec()
-                .create_symlink_to_artifact_cache(&mut ui, rootfs.path())
-                .unwrap();
-            let link = rootfs.path().join(CACHE_ARTIFACT_PATH);
-
-            assert_eq!(
-                cache_artifact_path(None::<&Path>),
-                link.read_link().unwrap()
-            );
-        }
-
-        #[test]
-        fn key_cache_symlink() {
-            let rootfs = TempDir::new("rootfs").unwrap();
-            let (mut ui, _, _) = ui();
-            build_spec()
-                .create_symlink_to_key_cache(&mut ui, rootfs.path())
-                .unwrap();
-            let link = rootfs.path().join(CACHE_KEY_PATH);
-
-            assert_eq!(cache_key_path(None::<&Path>), link.read_link().unwrap());
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        fn link_binaries() {
-            let rootfs = TempDir::new("rootfs").unwrap();
-            let (mut ui, _, _) = ui();
-            let base_pkgs = base_pkgs(rootfs.path());
-            build_spec()
-                .link_binaries(&mut ui, rootfs.path(), &base_pkgs)
-                .unwrap();
-
-            assert_eq!(
-                hcore::fs::pkg_install_path(base_pkgs.busybox.as_ref().unwrap(), None::<&Path>)
-                    .join("bin/busybox"),
-                rootfs.path().join("bin/busybox").read_link().unwrap(),
-                "busybox program is symlinked into /bin"
-            );
-            assert_eq!(
-                hcore::fs::pkg_install_path(&base_pkgs.busybox.unwrap(), None::<&Path>)
-                    .join("bin/sh"),
-                rootfs.path().join("bin/sh").read_link().unwrap(),
-                "busybox's sh program is symlinked into /bin"
-            );
-            assert_eq!(
-                hcore::fs::pkg_install_path(&base_pkgs.hab, None::<&Path>).join("bin/hab"),
-                rootfs.path().join("bin/hab").read_link().unwrap(),
-                "hab program is symlinked into /bin"
-            );
-        }
-
-        #[test]
-        fn link_cacerts() {
-            let rootfs = TempDir::new("rootfs").unwrap();
-            let (mut ui, _, _) = ui();
-            let base_pkgs = base_pkgs(rootfs.path());
-            build_spec()
-                .link_cacerts(&mut ui, rootfs.path(), &base_pkgs)
-                .unwrap();
-
-            assert_eq!(
-                hcore::fs::pkg_install_path(&base_pkgs.cacerts, None::<&Path>).join("ssl"),
-                rootfs.path().join("etc/ssl").read_link().unwrap(),
-                "cacerts are symlinked into /etc/ssl"
-            );
-        }
-
-        fn ui() -> (UI, OutputBuffer, OutputBuffer) {
-            let stdout_buf = OutputBuffer::new();
-            let stderr_buf = OutputBuffer::new();
-
-            let ui = UI::with_streams(
-                Box::new(io::empty()),
-                || Box::new(stdout_buf.clone()),
-                || Box::new(stderr_buf.clone()),
-                Coloring::Never,
-                false,
-            );
-
-            (ui, stdout_buf, stderr_buf)
-        }
-
-        fn base_pkgs<P: AsRef<Path>>(rootfs: P) -> BasePkgIdents {
-            BasePkgIdents {
-                hab: fake_hab_install(&rootfs),
-                sup: fake_sup_install(&rootfs),
-                launcher: fake_launcher_install(&rootfs),
-                busybox: Some(fake_busybox_install(&rootfs)),
-                cacerts: fake_cacerts_install(&rootfs),
-            }
-        }
-
-        fn fake_hab_install<P: AsRef<Path>>(rootfs: P) -> PackageIdent {
-            fake_pkg_install("acme/hab", Some(vec!["hab"]), false, &rootfs)
-        }
-
-        fn fake_sup_install<P: AsRef<Path>>(rootfs: P) -> PackageIdent {
-            fake_pkg_install("acme/hab-sup", Some(vec!["hab-sup"]), false, &rootfs)
-        }
-
-        fn fake_launcher_install<P: AsRef<Path>>(rootfs: P) -> PackageIdent {
-            fake_pkg_install(
-                "acme/hab-launcher",
-                Some(vec!["hab-launch"]),
-                false,
-                &rootfs,
-            )
-        }
-
-        fn fake_busybox_install<P: AsRef<Path>>(rootfs: P) -> PackageIdent {
-            fake_pkg_install("acme/busybox", Some(vec!["busybox", "sh"]), false, &rootfs)
-        }
-
-        fn fake_cacerts_install<P: AsRef<Path>>(rootfs: P) -> PackageIdent {
-            let ident = fake_pkg_install("acme/cacerts", None, false, &rootfs);
-            let prefix = hcore::fs::pkg_install_path(&ident, Some(rootfs));
-            util::write_file(prefix.join("ssl/cacert.pem"), "").unwrap();
-            ident
-        }
-
-        #[derive(Clone)]
-        pub struct OutputBuffer {
-            pub cursor: Arc<RwLock<Cursor<Vec<u8>>>>,
-        }
-
-        impl OutputBuffer {
-            fn new() -> Self {
-                OutputBuffer { cursor: Arc::new(RwLock::new(Cursor::new(Vec::new()))) }
-            }
-        }
-
-        impl Write for OutputBuffer {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                self.cursor
-                    .write()
-                    .expect("Cursor lock is poisoned")
-                    .write(buf)
-            }
-
-            fn flush(&mut self) -> io::Result<()> {
-                self.cursor
-                    .write()
-                    .expect("Cursor lock is poisoned")
-                    .flush()
-            }
-        }
-    }
-
-    mod build_root_context {
-        use std::collections::HashSet;
-        use std::iter::FromIterator;
-        use std::str::FromStr;
-
-        use hcore::package::PackageIdent;
-        use hcore::fs::FS_ROOT_PATH;
-
-        use super::super::*;
-        use super::*;
-
-        #[test]
-        fn build_context_from_a_spec() {
-            let rootfs = TempDir::new("rootfs").unwrap();
-            // A library-only package
-            let _ = fake_pkg_install("acme/libby", None, false, rootfs.path());
-            // A couple service packages
-            let runna_install_ident = fake_pkg_install("acme/runna", None, true, rootfs.path());
-            let _ = fake_pkg_install("acme/jogga", None, true, rootfs.path());
-            let mut spec = build_spec();
-            spec.idents_or_archives = vec!["acme/libby", "acme/runna", "acme/jogga"];
-            let ctx = BuildRootContext::from_spec(&spec, rootfs.path()).unwrap();
-
-            assert_eq!(
-                vec![
-                    &PackageIdent::from_str("acme/runna").unwrap(),
-                    &PackageIdent::from_str("acme/jogga").unwrap(),
-                ],
-                ctx.svc_idents()
-            );
-            assert_eq!(
-                &PackageIdent::from_str("acme/runna").unwrap(),
-                ctx.primary_svc_ident()
-            );
-            assert_eq!(
-                runna_install_ident,
-                ctx.installed_primary_svc_ident().unwrap()
-            );
-            assert_eq!(Path::new("/bin"), ctx.bin_path());
-            assert_eq!("/bin", ctx.env_path());
-            assert_eq!(spec.channel, ctx.channel());
-            assert_eq!(rootfs.path(), ctx.rootfs());
-
-            // Order of paths should not matter, this is why we set-compare
-            let vol_paths = vec![
-                (&*FS_ROOT_PATH)
-                    .join("hab/svc/jogga/config")
-                    .to_string_lossy()
-                    .to_string(),
-                (&*FS_ROOT_PATH)
-                    .join("hab/svc/jogga/data")
-                    .to_string_lossy()
-                    .to_string(),
-                (&*FS_ROOT_PATH)
-                    .join("hab/svc/runna/config")
-                    .to_string_lossy()
-                    .to_string(),
-                (&*FS_ROOT_PATH)
-                    .join("hab/svc/runna/data")
-                    .to_string_lossy()
-                    .to_string(),
-            ];
-            let vol_paths: HashSet<String> = HashSet::from_iter(vol_paths.iter().cloned());
-            assert_eq!(
-                vol_paths,
-                HashSet::from_iter(ctx.svc_volumes().iter().cloned())
-            );
-
-            let (users, groups) = ctx.svc_users_and_groups().unwrap();
-            assert_eq!(1, users.len());
-            assert!(users[0].starts_with("my_user:"));
-            assert_eq!(1, groups.len());
-            assert!(groups[0].starts_with("my_group:"));
-            // TODO fn: check ctx.svc_exposes()
-        }
-    }
+/// The package identifiers for installed base packages.
+#[derive(Debug)]
+struct BasePkgIdents {
+    /// Installed package identifer for the Habitat CLI package.
+    pub hab: PackageIdent,
+    /// Installed package identifer for the Supervisor package.
+    pub sup: PackageIdent,
+    /// Installed package identifer for the Launcher package.
+    pub launcher: PackageIdent,
+    /// Installed package identifer for the Busybox package.
+    pub busybox: Option<PackageIdent>,
 }

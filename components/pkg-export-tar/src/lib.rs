@@ -24,6 +24,8 @@ mod build;
 pub mod cli;
 mod error;
 mod util;
+mod tarball;
+mod rootfs;
 
 use std::process::Command;
 use std::path::{Path, PathBuf};
@@ -38,11 +40,14 @@ use hcore::package::{PackageIdent, PackageArchive};
 use mktemp::Temp;
 use regex::Regex;
 use tar::Builder;
+use tarball::TarBuildRoot;
 
 pub use build::BuildSpec;
 
 /// The version of this library and program when built.
 pub const VERSION: &'static str = include_str!(concat!(env!("OUT_DIR"), "/VERSION"));
+/// The Habitat Package Identifier string for a Busybox package.
+const BUSYBOX_IDENT: &'static str = "core/busybox-static";
 
 pub fn export_for_cli_matches(ui: &mut UI, matches: &clap::ArgMatches) -> Result<()> {
     let default_channel = channel::default();
@@ -55,75 +60,82 @@ pub fn export_for_cli_matches(ui: &mut UI, matches: &clap::ArgMatches) -> Result
 
 pub fn export(ui: &mut UI, build_spec: BuildSpec) -> Result<()> {
 
+println!("build_spec {:?}", build_spec);
     let hart_to_package = build_spec.idents_or_archives.join(", ");
     let builder_url = build_spec.url;
+    let build_spec_created = build_spec.create(ui);
+println!("build_spec_created {:?}", build_spec_created);
+//    let build_root = TarBuildRoot::from_build_root(build_spec.create(ui)?, ui)?;
 
-    ui.begin(
-        format!("Building a tarball with: {}", hart_to_package),
-    )?;
 
-    let temp_dir_path = Temp::new_dir().unwrap().to_path_buf();
+//    let build_root = TarBuildRoot::from_build_root(build_spec.create(ui)?, ui)?;
 
-    initiate_tar_command(&temp_dir_path, &hart_to_package, &builder_url);
+    //  ui.begin(
+    //      format!("Building a tarball with: {}", hart_to_package),
+    //  )?;
+
+    // let temp_dir_path = Temp::new_dir().unwrap().to_path_buf();
+
+    // initiate_tar_command(&temp_dir_path, &hart_to_package, &builder_url);
 
     Ok(())
 }
 
-fn initiate_tar_command(temp_dir_path: &PathBuf, hart_to_package: &str, builder_url: &str) {
-    let status = Command::new("hab")
-        .arg("studio")
-        .arg("-r")
-        .arg(&temp_dir_path)
-        .arg("new")
-        .status()
-        .expect("failed to create studio");
+// fn initiate_tar_command(temp_dir_path: &PathBuf, hart_to_package: &str, builder_url: &str) {
+//     let status = Command::new("hab")
+//         .arg("studio")
+//         .arg("-r")
+//         .arg(&temp_dir_path)
+//         .arg("new")
+//         .status()
+//         .expect("failed to create studio");
 
-    if status.success() {
-        println!("Able to create studio to export package as tarball, proceeding...");
-        install_command(&temp_dir_path, &hart_to_package, &builder_url);
-    } else {
-        println!("Unable to create a studio to export the package as a tarball.")
-    }
-}
+//     if status.success() {
+//         println!("Able to create studio to export package as tarball, proceeding...");
+//         install_command(&temp_dir_path, &hart_to_package, &builder_url);
+//     } else {
+//         println!("Unable to create a studio to export the package as a tarball.")
+//     }
+// }
 
-fn install_command(temp_dir_path: &PathBuf, hart_to_package: &str, builder_url: &str) {
-    let status = Command::new("hab")
-        .arg("studio")
-        .arg("-q")
-        .arg("-r")
-        .arg(&temp_dir_path)
-        .arg("run")
-        .arg("hab")
-        .arg("install")
-        .arg("-u")
-        .arg(builder_url)
-        .arg(&hart_to_package)
-        .status()
-        .expect("failed to install package in studio");
+// fn install_command(temp_dir_path: &PathBuf, hart_to_package: &str, builder_url: &str) {
+//     let status = Command::new("hab")
+//         .arg("studio")
+//         .arg("-q")
+//         .arg("-r")
+//         .arg(&temp_dir_path)
+//         .arg("run")
+//         .arg("hab")
+//         .arg("install")
+//         .arg("-u")
+//         .arg(builder_url)
+//         .arg(&hart_to_package)
+//         .status()
+//         .expect("failed to install package in studio");
 
-    if status.success() {
-        println!("Hart package is installable in a studio, exporting tarball...");
-        tar_command(&temp_dir_path, &hart_to_package);
-    } else {
-        println!("Hart package is NOT installable in a studio and could not be exported.");
-        println!("Please see the above error for details.");
-    }
-}
+//     if status.success() {
+//         println!("Hart package is installable in a studio, exporting tarball...");
+//         tar_command(&temp_dir_path, &hart_to_package);
+//     } else {
+//         println!("Hart package is NOT installable in a studio and could not be exported.");
+//         println!("Please see the above error for details.");
+//     }
+// }
 
-fn tar_command(temp_dir_path: &PathBuf, hart_to_package: &str) {
-    let tarball = File::create(tar_name(&hart_to_package)).unwrap();
-    let mut tar_builder = Builder::new(tarball);
+// fn tar_command(temp_dir_path: &PathBuf, hart_to_package: &str) {
+//     let tarball = File::create(tar_name(&hart_to_package)).unwrap();
+//     let mut tar_builder = Builder::new(tarball);
 
-    let mut hab_pkgs_buf = temp_dir_path.clone();
-    hab_pkgs_buf.push("hab/pkgs");
+//     let mut hab_pkgs_buf = temp_dir_path.clone();
+//     hab_pkgs_buf.push("hab/pkgs");
 
-    tar_builder.append_dir_all("hab/pkgs", hab_pkgs_buf);
+//     tar_builder.append_dir_all("hab/pkgs", hab_pkgs_buf);
 
-    let mut hab_bin_buf = temp_dir_path.clone();
-    hab_bin_buf.push("hab/bin");
+//     let mut hab_bin_buf = temp_dir_path.clone();
+//     hab_bin_buf.push("hab/bin");
 
-    tar_builder.append_dir_all("hab/bin", hab_bin_buf);
-}
+//     tar_builder.append_dir_all("hab/bin", hab_bin_buf);
+// }
 
 fn tar_name(hart_to_package: &str) -> String {
     let path = Path::new(hart_to_package);
