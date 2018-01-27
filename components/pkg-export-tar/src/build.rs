@@ -93,7 +93,7 @@ impl<'a> BuildSpec<'a> {
     /// * If a temporary directory cannot be created
     /// * If the root file system cannot be created
     /// * If the `BuildRootContext` cannot be created
-    pub fn create(self, ui: &mut UI) -> Result<BuildRoot> {
+    pub fn create(self, ui: &mut UI) -> Result<TempDir> {
         let workdir = TempDir::new(&*PROGRAM_NAME)?;
         let rootfs = workdir.path().join("rootfs");
 
@@ -102,13 +102,8 @@ impl<'a> BuildSpec<'a> {
             format!("build root in {}", workdir.path().display()),
         )?;
         self.prepare_rootfs(ui, &rootfs)?;
-println!("debugs to here");
-        let ctx = BuildRootContext::from_spec(&self, rootfs)?;
 
-        Ok(BuildRoot {
-            workdir: workdir,
-            ctx: ctx,
-        })
+        Ok(workdir)
     }
 
     fn prepare_rootfs<P: AsRef<Path>>(&self, ui: &mut UI, rootfs: P) -> Result<()> {
@@ -295,11 +290,8 @@ impl BuildRootContext {
     /// * If a Package Identifier cannot be parsed from an string representation
     /// * If package metadata cannot be read
     pub fn from_spec<P: Into<PathBuf>>(spec: &BuildSpec, rootfs: P) -> Result<Self> {
-println!("one");
         let rootfs = rootfs.into();
-println!("two");
         let mut idents = Vec::new();
-println!("three");
         for ident_or_archive in &spec.idents_or_archives {
             let ident = if Path::new(ident_or_archive).is_file() {
                 // We're going to use the `$pkg_origin/$pkg_name`, fuzzy form of a package
@@ -311,9 +303,7 @@ println!("three");
             } else {
                 PackageIdent::from_str(ident_or_archive)?
             };
-println!("four");
             let pkg_install = PackageInstall::load(&ident, Some(&rootfs))?;
-println!("five");
             if pkg_install.is_runnable() {
                 idents.push(PkgIdentType::Svc(SvcIdent {
                     ident: ident,
@@ -324,7 +314,6 @@ println!("five");
             }
         }
         let bin_path = util::bin_path();
-
         let context = BuildRootContext {
             idents: idents,
             bin_path: bin_path.into(),
@@ -333,7 +322,6 @@ println!("five");
             rootfs: rootfs,
         };
         context.validate()?;
-
         Ok(context)
     }
 
@@ -345,7 +333,6 @@ println!("five");
                 self.idents.iter().map(|e| e.ident().to_string()).collect(),
             ))?;
         }
-
         Ok(())
     }
 

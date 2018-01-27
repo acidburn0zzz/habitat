@@ -59,83 +59,25 @@ pub fn export_for_cli_matches(ui: &mut UI, matches: &clap::ArgMatches) -> Result
 }
 
 pub fn export(ui: &mut UI, build_spec: BuildSpec) -> Result<()> {
-
-println!("build_spec {:?}", build_spec);
     let hart_to_package = build_spec.idents_or_archives.join(", ");
     let builder_url = build_spec.url;
-    let build_spec_created = build_spec.create(ui);
-println!("build_spec_created {:?}", build_spec_created);
-//    let build_root = TarBuildRoot::from_build_root(build_spec.create(ui)?, ui)?;
 
+    let builder_dir = build_spec.create(ui).unwrap();
+    let builder_dir_path = builder_dir.path();
 
-//    let build_root = TarBuildRoot::from_build_root(build_spec.create(ui)?, ui)?;
-
-    //  ui.begin(
-    //      format!("Building a tarball with: {}", hart_to_package),
-    //  )?;
-
-    // let temp_dir_path = Temp::new_dir().unwrap().to_path_buf();
-
-    // initiate_tar_command(&temp_dir_path, &hart_to_package, &builder_url);
-
+    tar_command(builder_dir_path, &hart_to_package);
     Ok(())
 }
 
-// fn initiate_tar_command(temp_dir_path: &PathBuf, hart_to_package: &str, builder_url: &str) {
-//     let status = Command::new("hab")
-//         .arg("studio")
-//         .arg("-r")
-//         .arg(&temp_dir_path)
-//         .arg("new")
-//         .status()
-//         .expect("failed to create studio");
+fn tar_command(temp_dir_path: &Path, hart_to_package: &str) {
+    let tarball = File::create(tar_name(&hart_to_package)).unwrap();
+    let mut tar_builder = Builder::new(tarball);
 
-//     if status.success() {
-//         println!("Able to create studio to export package as tarball, proceeding...");
-//         install_command(&temp_dir_path, &hart_to_package, &builder_url);
-//     } else {
-//         println!("Unable to create a studio to export the package as a tarball.")
-//     }
-// }
-
-// fn install_command(temp_dir_path: &PathBuf, hart_to_package: &str, builder_url: &str) {
-//     let status = Command::new("hab")
-//         .arg("studio")
-//         .arg("-q")
-//         .arg("-r")
-//         .arg(&temp_dir_path)
-//         .arg("run")
-//         .arg("hab")
-//         .arg("install")
-//         .arg("-u")
-//         .arg(builder_url)
-//         .arg(&hart_to_package)
-//         .status()
-//         .expect("failed to install package in studio");
-
-//     if status.success() {
-//         println!("Hart package is installable in a studio, exporting tarball...");
-//         tar_command(&temp_dir_path, &hart_to_package);
-//     } else {
-//         println!("Hart package is NOT installable in a studio and could not be exported.");
-//         println!("Please see the above error for details.");
-//     }
-// }
-
-// fn tar_command(temp_dir_path: &PathBuf, hart_to_package: &str) {
-//     let tarball = File::create(tar_name(&hart_to_package)).unwrap();
-//     let mut tar_builder = Builder::new(tarball);
-
-//     let mut hab_pkgs_buf = temp_dir_path.clone();
-//     hab_pkgs_buf.push("hab/pkgs");
-
-//     tar_builder.append_dir_all("hab/pkgs", hab_pkgs_buf);
-
-//     let mut hab_bin_buf = temp_dir_path.clone();
-//     hab_bin_buf.push("hab/bin");
-
-//     tar_builder.append_dir_all("hab/bin", hab_bin_buf);
-// }
+    let mut hab_pkgs_path = temp_dir_path.clone().join("rootfs/hab");
+    println!("hab_pkgs_path {:?}", hab_pkgs_path);
+    
+    tar_builder.append_dir_all("hab", hab_pkgs_path);
+}
 
 fn tar_name(hart_to_package: &str) -> String {
     let path = Path::new(hart_to_package);
