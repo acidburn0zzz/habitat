@@ -23,19 +23,3 @@ const BIN_PATH: &'static str = "/bin";
 pub fn bin_path() -> &'static Path {
     Path::new(BIN_PATH)
 }
-
-/// Writes a truncated/new file at the provided path with the provided content.
-///
-/// # Errors
-///
-/// * If an `IO` error occurs while creating, tuncating, writing, or closing the file
-pub fn write_file<T>(file: T, content: &str) -> Result<()>
-where
-    T: AsRef<Path>,
-{
-    fs::create_dir_all(file.as_ref().parent().expect("Parent directory exists"))?;
-    let mut f = File::create(file)?;
-    f.write_all(content.as_bytes())?;
-    Ok(())
-}
-

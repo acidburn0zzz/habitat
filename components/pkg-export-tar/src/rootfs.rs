@@ -18,7 +18,6 @@ use std::path::Path;
 use hcore::os::filesystem;
 
 use error::Result;
-use util::write_file;
 
 /// Creates a root file system under the given path.
 ///

@@ -24,11 +24,10 @@ mod build;
 pub mod cli;
 mod error;
 mod util;
-mod tarball;
 mod rootfs;
 
 use std::process::Command;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 use std::fs::File;
 pub use cli::{Cli, PkgIdentArgOptions};
@@ -37,10 +36,8 @@ use common::ui::UI;
 use hcore::channel;
 use hcore::url as hurl;
 use hcore::package::{PackageIdent, PackageArchive};
-use mktemp::Temp;
 use regex::Regex;
 use tar::Builder;
-use tarball::TarBuildRoot;
 
 pub use build::BuildSpec;
 
@@ -60,7 +57,6 @@ pub fn export_for_cli_matches(ui: &mut UI, matches: &clap::ArgMatches) -> Result
 
 pub fn export(ui: &mut UI, build_spec: BuildSpec) -> Result<()> {
     let hart_to_package = build_spec.idents_or_archives.join(", ");
-    let builder_url = build_spec.url;
 
     let builder_dir = build_spec.create(ui).unwrap();
     let builder_dir_path = builder_dir.path();
@@ -73,7 +69,7 @@ fn tar_command(temp_dir_path: &Path, hart_to_package: &str) {
     let tarball = File::create(tar_name(&hart_to_package)).unwrap();
     let mut tar_builder = Builder::new(tarball);
 
-    let mut hab_pkgs_path = temp_dir_path.clone().join("rootfs/hab");
+    let hab_pkgs_path = temp_dir_path.clone().join("rootfs/hab");
     println!("hab_pkgs_path {:?}", hab_pkgs_path);
     
     tar_builder.append_dir_all("hab", hab_pkgs_path);

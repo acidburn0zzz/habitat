@@ -15,22 +15,20 @@
 use std::fs as stdfs;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::symlink;
-use std::str::FromStr;
 use clap;
 use common;
 use common::command::package::install::InstallSource;
 use common::ui::{UI, Status};
 use tempdir::TempDir;
-use std::path::{Path, PathBuf};
-use hcore::package::{PackageArchive, PackageIdent, PackageInstall};
-use error::{Error, Result};
+use std::path::{Path};
+use hcore::package::PackageIdent;
+use error::{Result};
 use hcore::PROGRAM_NAME;
 use hcore::fs::{CACHE_ARTIFACT_PATH, CACHE_KEY_PATH, cache_artifact_path, cache_key_path};
 
 use super::{VERSION, BUSYBOX_IDENT};
 
 use rootfs;
-use util;
 
 const DEFAULT_HAB_IDENT: &'static str = "core/hab";
 const DEFAULT_LAUNCHER_IDENT: &'static str = "core/hab-launcher";
@@ -113,8 +111,8 @@ impl<'a> BuildSpec<'a> {
         }
         self.create_symlink_to_artifact_cache(ui, &rootfs)?;
         self.create_symlink_to_key_cache(ui, &rootfs)?;
-        let base_pkgs = self.install_base_pkgs(ui, &rootfs)?;
-        let user_pkgs = self.install_user_pkgs(ui, &rootfs)?;
+        self.install_base_pkgs(ui, &rootfs)?;
+        self.install_user_pkgs(ui, &rootfs)?;
         self.remove_symlink_to_key_cache(ui, &rootfs)?;
         self.remove_symlink_to_artifact_cache(ui, &rootfs)?;
 
@@ -249,134 +247,6 @@ impl<'a> BuildSpec<'a> {
         Ok(())
     }
 
-}
-
-#[derive(Debug)]
-pub struct BuildRoot {
-    /// The temporary directory under which all root file system and other related files and
-    /// directories will be created.
-    workdir: TempDir,
-    /// The build root context containing information about Habitat packages, `PATH` info, etc.
-    ctx: BuildRootContext,
-}
-
-/// The file system contents, location, Habitat pacakges, and other context for a build root.
-#[derive(Debug)]
-pub struct BuildRootContext {
-    /// A list of all Habitat service and library packages which were determined from the original
-    /// list in a `BuildSpec`.
-    idents: Vec<PkgIdentType>,
-    /// The `bin` path which will be used for all program symlinking.
-    bin_path: PathBuf,
-    /// A string representation of the build root's `PATH` environment variable value (i.e. a
-    /// colon-delimited `PATH` string).
-    env_path: String,
-    /// The channel name which was used to install all user-provided Habitat service and library
-    /// packages.
-    channel: String,
-    /// The path to the root of the file system.
-    rootfs: PathBuf,
-}
-
-impl BuildRootContext {
-    /// Creates a new `BuildRootContext` from a build spec.
-    ///
-    /// The root file system path will be used to inspect installed Habitat packages to populate
-    /// metadata, determine primary service, etc.
-    ///
-    /// # Errors
-    ///
-    /// * If an artifact file cannot be read or if a Package Identifier cannot be determined
-    /// * If a Package Identifier cannot be parsed from an string representation
-    /// * If package metadata cannot be read
-    pub fn from_spec<P: Into<PathBuf>>(spec: &BuildSpec, rootfs: P) -> Result<Self> {
-        let rootfs = rootfs.into();
-        let mut idents = Vec::new();
-        for ident_or_archive in &spec.idents_or_archives {
-            let ident = if Path::new(ident_or_archive).is_file() {
-                // We're going to use the `$pkg_origin/$pkg_name`, fuzzy form of a package
-                // identifier to ensure that update strategies will work if desired
-                let mut archive_ident = PackageArchive::new(ident_or_archive).ident()?;
-                archive_ident.version = None;
-                archive_ident.release = None;
-                archive_ident
-            } else {
-                PackageIdent::from_str(ident_or_archive)?
-            };
-            let pkg_install = PackageInstall::load(&ident, Some(&rootfs))?;
-            if pkg_install.is_runnable() {
-                idents.push(PkgIdentType::Svc(SvcIdent {
-                    ident: ident,
-                    exposes: pkg_install.exposes()?,
-                }));
-            } else {
-                idents.push(PkgIdentType::Lib(ident));
-            }
-        }
-        let bin_path = util::bin_path();
-        let context = BuildRootContext {
-            idents: idents,
-            bin_path: bin_path.into(),
-            env_path: bin_path.to_string_lossy().into_owned(),
-            channel: spec.channel.into(),
-            rootfs: rootfs,
-        };
-        context.validate()?;
-        Ok(context)
-    }
-
-    fn validate(&self) -> Result<()> {
-        // A valid context for a build root will contain at least one service package, called the
-        // primary service package.
-        if let None = self.svc_idents().first().map(|e| *e) {
-            return Err(Error::PrimaryServicePackageNotFound(
-                self.idents.iter().map(|e| e.ident().to_string()).collect(),
-            ))?;
-        }
-        Ok(())
-    }
-
-    /// Returns a list of all provided Habitat packages which contain a runnable service.
-    pub fn svc_idents(&self) -> Vec<&PackageIdent> {
-        self.idents
-            .iter()
-            .filter_map(|t| match *t {
-                PkgIdentType::Svc(ref svc) => Some(svc.ident.as_ref()),
-                _ => None,
-            })
-            .collect()
-    }
-}
-
-/// A service identifier representing a Habitat package which contains a runnable service.
-#[derive(Debug)]
-struct SvcIdent {
-    /// The Package Identifier.
-    pub ident: PackageIdent,
-    /// A list of all port exposes for the package.
-    pub exposes: Vec<String>,
-}
-
-
-/// An enum of service and library Habitat packages.
-///
-/// A package is considered a service package if it contains a runnable service, via a `run` hook.
-#[derive(Debug)]
-enum PkgIdentType {
-    /// A service package which contains a runnable service.
-    Svc(SvcIdent),
-    /// A library package which does not contain a runnable service.
-    Lib(PackageIdent),
-}
-
-impl PkgIdentType {
-    /// Returns the Package Identifier for the package type.
-    pub fn ident(&self) -> &PackageIdent {
-        match *self {
-            PkgIdentType::Svc(ref svc) => &svc.ident,
-            PkgIdentType::Lib(ref ident) => &ident,
-        }
-    }
 }
 
 /// The package identifiers for installed base packages.
